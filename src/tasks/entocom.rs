@@ -27,7 +27,7 @@ async fn now_commons(bot: Bot, commons: Bot) {
         .generate(&bot);
 
     let re =
-        Regex::new(r"(?im)^\{\{(Now Commons|db-f8|db-commons|NC)(\|([^|}\n]+))?([^}\n]+)?\}\}$")
+        Regex::new(r"(?im)^\{\{(Now Commons|db-f8|db-commons|NC)([| ]+([^|}\n]+))?([^}\n]+)?\}\}$")
             .unwrap(); // dont you just love regex? i sure do
 
     while let Some(item) = feed.recv().await {
@@ -57,7 +57,7 @@ async fn now_commons(bot: Bot, commons: Bot) {
             if !mirror.exists().await.unwrap() {
                 println!("{destination} no longer exists")
             } else {
-                let full = re.captures(&wikitext).unwrap().get(0).unwrap().as_str();
+                let mut full = re.captures(&wikitext).unwrap().get(0).unwrap().as_str();
                 let mirrortext = mirror.wikitext().await.unwrap().to_lowercase();
 
                 let (replacement, summary) = if mirrortext.contains("{{delete") {
@@ -65,21 +65,29 @@ async fn now_commons(bot: Bot, commons: Bot) {
                         format!("{{{{Nominated for deletion on Commons|{destination}}}}}"),
                         "Task 1.1) (File is currently nominated for deletion on Commons. Replacing template.) (TRIAL",
                     )
-                } else if mirrortext.contains("{{keep local") {
+                } else if wikitext.to_lowercase().contains("{{keep local") {
                     (
                         "".to_string(),
                         "Task 1.2) ({{Keep local}} also present. Removing {{Now Commons}}.) (TRIAL",
+                    )
+                } else if wikitext.to_lowercase().contains("copy to") {
+                    let re = Regex::new(r"(?im)\{\{(Copy to Wikimedia Commons)([| ]+([^|}\n]+))?([^}\n]+)?\}\}").unwrap();
+                    full = re.captures(&wikitext).unwrap().get(0).unwrap().as_str();
+
+                    (
+                        "".to_string(), 
+                        "Task 1.3) (File is now on Commons. Removing template.) (TRIAL"
                     )
                 } else {
                     return;
                 };
 
                 page.save(
-                    wikitext.replace(full, &replacement),
+                    wikitext.replace(full.trim(), &replacement),
                     &SaveOptions::summary(summary)
                 ).await.unwrap();
 
-                println!("{replacement} {summary}")
+                println!("{title} {replacement} {summary}")
             }
         }));
 
@@ -97,9 +105,10 @@ async fn nominated_for(bot: Bot, commons: Bot) {
         .namespace([6])
         .generate(&bot);
 
-    let re =
-        Regex::new(r"(?im)^\{\{(Nominated for deletion on Commons)(\|([^|}\n]+))?([^}\n]+)?\}\}$")
-            .unwrap();
+    let re = Regex::new(
+        r"(?im)^\{\{(Nominated for deletion on Commons|ndc)(\|([^|}\n]+))?([^}\n]+)?\}\}$",
+    )
+    .unwrap();
 
     while let Some(item) = feed.recv().await {
         let page = item.unwrap();
@@ -129,22 +138,22 @@ async fn nominated_for(bot: Bot, commons: Bot) {
             let (replacement, summary) = if !mirror.exists().await.unwrap() {
                 (
                     format!("{{{{Deleted on Commons|{destination}}}}}"),
-                    "Task 2.1) (File has been deleted on Commons. Replacing template.) (TRIAL",
+                    "Task 1.4) (File has been deleted on Commons. Replacing template.) (TRIAL",
                 )
             } else if {
                 let mirrortext = mirror.wikitext().await.unwrap().to_lowercase();
                 !(mirrortext.contains("{{delete") || mirrortext.contains("since|"))
             } {
                 (
-                    "".to_string(),
-                    "Task 2.2) (File no longer nominated for deletion on Commons. Removing template.) (TRIAL",
+                    format!("{{{{Now Commons|{destination}}}}}"),
+                    "Task 1.5) (File no longer nominated for deletion on Commons. Replacing template.) (TRIAL",
                 )
             } else {
                 return;
             };
 
             page.save(
-                wikitext.replace(full, &replacement),
+                wikitext.replace(full.trim(), &replacement),
                 &SaveOptions::summary(summary)
             ).await.unwrap();
 
@@ -165,8 +174,8 @@ async fn copy_to(bot: Bot, commons: Bot) {
         .namespace([6])
         .generate(&bot);
 
-    let re =
-        Regex::new(r"(?im)\{\{(Copy to Wikimedia Commons)(\|([^|}\n]+))?([^}\n]+)?\}\}").unwrap();
+    let re = Regex::new(r"(?im)\{\{(Copy to Wikimedia Commons)([| ]+([^|}\n]+))?([^}\n]+)?\}\}")
+        .unwrap();
 
     while let Some(item) = feed.recv().await {
         let page = item.unwrap();
@@ -180,7 +189,6 @@ async fn copy_to(bot: Bot, commons: Bot) {
             if !re.is_match(&wikitext) {
                 panic!("Unable to find copy to template on {title}")
             }
-            println!("{title}");
 
             let destination = "File:".to_string()
                 + &re // i have no idea why this works. if it aint broke dont fix it, amirite?
@@ -192,26 +200,25 @@ async fn copy_to(bot: Bot, commons: Bot) {
                     .replace("File:", "");
 
             let full = re.captures(&wikitext).unwrap().get(0).unwrap().as_str();
-            let mirror = commons.page(&html_escape::decode_html_entities(&destination)).unwrap();
+            let mirror = commons
+                .page(&html_escape::decode_html_entities(&destination))
+                .unwrap();
 
-            let (replacement, summary) = if mirror.exists().await.unwrap() {
-                (
-                    format!("{{{{Now Commons|{destination}|date={{{{subst:#time:Y-m-d}}}}|bot=CanonNiBot}}}}"),
-                    "Task 3.1) (File already on Commons. Replacing template.) (TRIAL",
-                )
-            } else if wikitext.to_lowercase().contains("non-free") {
+            let (replacement, summary) = if wikitext.to_lowercase().contains("non-free") {
                 (
                     "".to_string(),
-                    "Task 3.2) (Non-free file illegible for transfer. Removing template.) (TRIAL",
+                    "Task 1.6) (Non-free file illegible for transfer. Removing template.) (TRIAL",
                 )
             } else {
                 return;
             };
 
             page.save(
-                wikitext.replace(full, &replacement),
-                &SaveOptions::summary(summary)
-            ).await.unwrap();
+                wikitext.replace(full.trim(), &replacement),
+                &SaveOptions::summary(summary),
+            )
+            .await
+            .unwrap();
 
             println!("{title} {replacement} {summary}")
         }));
